@@ -1,10 +1,10 @@
+"""Core workflow for the campus access-card request manager."""
+
 from campus_access.errors import RequestError
 
 
 CARD_TYPES = ("visitor", "student", "staff")
-
 STATUSES = ("requested", "approved", "issued", "returned")
-
 ASCII_DIGITS = "0123456789"
 
 
@@ -14,17 +14,16 @@ def is_valid_id(value):
         return False
 
     digits = value[1:]
-
     return all(char in ASCII_DIGITS for char in digits) and int(digits) >= 1
 
 
 def make_id(number):
-    """Generate a request ID such as A001 or A1000."""
+    """Generate an ID such as A001 or A1000."""
     return "A%03d" % number
 
 
 def _clean_text(value, label):
-    """Reject values that are not strings or contain only whitespace."""
+    """Reject non-string or blank text."""
     if not isinstance(value, str) or not value.strip():
         raise RequestError("%s must not be blank." % label)
 
@@ -54,10 +53,10 @@ class RequestManager:
         """Create a new access-card request."""
         fellow_id = _clean_text(fellow_id, "Fellow ID")
 
-        if card_type not in CARD_TYPES:
+        if not isinstance(card_type, str) or card_type not in CARD_TYPES:
             raise RequestError(
-                "Invalid card type %r; allowed: %s."
-                % (card_type, ", ".join(CARD_TYPES))
+                "Invalid card type; allowed: %s."
+                % ", ".join(CARD_TYPES)
             )
 
         record = {
@@ -95,13 +94,13 @@ class RequestManager:
 
         self._require(record, "approved", "issue")
 
-        if not isinstance(record["approved_by"], str) or not record["approved_by"].strip():
+        approver = record["approved_by"]
+        if not isinstance(approver, str) or not approver.strip():
             raise RequestError(
                 "%s has no approver; cannot issue." % request_id
             )
 
         record["status"] = "issued"
-
         return dict(record)
 
     def return_card(self, request_id):
@@ -111,12 +110,11 @@ class RequestManager:
         self._require(record, "issued", "return")
 
         record["status"] = "returned"
-
         return dict(record)
 
     @staticmethod
     def _require(record, needed, action):
-        """Reject an operation if the request is in the wrong state."""
+        """Reject operations that are invalid for the current status."""
         if record["status"] != needed:
             raise RequestError(
                 "Cannot %s %s: status is '%s', must be '%s'."
@@ -144,5 +142,95 @@ class RequestManager:
         return {
             "requests": self.list(),
             "next_id": self._next,
-        }    
-        
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        """Restore a manager after validating saved data."""
+        if not isinstance(data, dict):
+            raise RequestError("Saved data must be a dictionary.")
+
+        if set(data) != {"requests", "next_id"}:
+            raise RequestError(
+                "Saved data must contain requests and next_id only."
+            )
+
+        requests = data["requests"]
+        next_id = data["next_id"]
+
+        if not isinstance(requests, list):
+            raise RequestError("Saved requests must be a list.")
+
+        if type(next_id) is not int or next_id < 1:
+            raise RequestError("Invalid next ID.")
+
+        manager = cls()
+        seen_ids = set()
+
+        for record in requests:
+            if not isinstance(record, dict):
+                raise RequestError("Each request must be a dictionary.")
+
+            required = {
+                "id",
+                "fellow_id",
+                "card_type",
+                "status",
+                "approved_by",
+            }
+
+            if set(record) != required:
+                raise RequestError(
+                    "Request has missing or unexpected fields."
+                )
+
+            request_id = record["id"]
+
+            if not is_valid_id(request_id):
+                raise RequestError("Malformed request ID.")
+
+            if request_id in seen_ids:
+                raise RequestError(
+                    "Duplicate request ID: %s" % request_id
+                )
+
+            fellow_id = record["fellow_id"]
+            if not isinstance(fellow_id, str) or not fellow_id.strip():
+                raise RequestError("Invalid fellow ID.")
+
+            card_type = record["card_type"]
+            if not isinstance(card_type, str) or card_type not in CARD_TYPES:
+                raise RequestError("Invalid card type.")
+
+            status = record["status"]
+            if not isinstance(status, str) or status not in STATUSES:
+                raise RequestError("Invalid request status.")
+
+            approver = record["approved_by"]
+
+            if status == "requested":
+                if approver is not None:
+                    raise RequestError(
+                        "Requested records must have no approver."
+                    )
+            elif not isinstance(approver, str) or not approver.strip():
+                raise RequestError(
+                    "Approved, issued, and returned records "
+                    "require an approver."
+                )
+
+            seen_ids.add(request_id)
+            manager._requests[request_id] = dict(record)
+
+        expected_next = max(
+            (int(request_id[1:]) for request_id in seen_ids),
+            default=0,
+        ) + 1
+
+        if next_id < expected_next:
+            raise RequestError(
+                "Next ID would duplicate an existing request."
+            )
+
+        manager._next = next_id
+        return manager
