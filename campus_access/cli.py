@@ -1,12 +1,14 @@
+
+"""Command-line interface for the campus access-card manager."""
+
 from campus_access.work import RequestManager
 from campus_access.errors import RequestError, DataError
 from campus_access.storage import save_manager, load_manager
 
-
 DATA_FILE = "data/requests.json"
 
 
-def run():
+def main():
     manager = RequestManager()
 
     while True:
@@ -21,43 +23,42 @@ def run():
         print("8. Reload requests")
         print("9. Exit")
 
-        choice = input("Choose an option: ").strip()
-
         try:
+            choice = input("Choose an option: ").strip()
+
             if choice == "1":
-                fellow_id = input("Enter fellow ID: ")
+                fellow_id = input("Enter fellow ID: ").strip()
                 card_type = input(
-                    "Enter card type (visitor/student/staff): "
-                )
+                    "Enter card type (visitor, student, staff): "
+                ).strip()
 
                 request = manager.create(fellow_id, card_type)
                 print("Request created:", request)
 
             elif choice == "2":
-                request_id = input("Enter request ID: ")
+                request_id = input("Enter request ID: ").strip()
                 print(manager.view(request_id))
 
             elif choice == "3":
-                request_id = input("Enter request ID: ")
-                approver = input("Enter approver name: ")
+                request_id = input("Enter request ID: ").strip()
+                approver = input("Enter approver name: ").strip()
                 print(manager.approve(request_id, approver))
 
             elif choice == "4":
-                request_id = input("Enter request ID: ")
+                request_id = input("Enter request ID: ").strip()
                 print(manager.issue(request_id))
 
             elif choice == "5":
-                request_id = input("Enter request ID: ")
+                request_id = input("Enter request ID: ").strip()
                 print(manager.return_card(request_id))
 
             elif choice == "6":
-                requests = manager.list()
+                status = input(
+                    "Filter by status (requested, approved, issued, returned), "
+                    "or press Enter for all: "
+                ).strip()
 
-                if requests:
-                    for request in requests:
-                        print(request)
-                else:
-                    print("No requests found.")
+                print(manager.list(status if status else None))
 
             elif choice == "7":
                 save_manager(manager, DATA_FILE)
@@ -68,15 +69,19 @@ def run():
                 print("Requests reloaded successfully.")
 
             elif choice == "9":
-                print("Goodbye!")
+                print("Goodbye.")
                 break
 
             else:
-                print("Invalid option. Choose 1–9.")
+                print("Invalid option. Choose a number from 1 to 9.")
 
         except (RequestError, DataError) as error:
             print("Error:", error)
 
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting program.")
+            break
+
 
 if __name__ == "__main__":
-    run()
+    main()

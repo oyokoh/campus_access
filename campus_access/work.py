@@ -1,7 +1,7 @@
+
 """Core workflow for the campus access-card request manager."""
 
 from campus_access.errors import RequestError
-
 
 CARD_TYPES = ("visitor", "student", "staff")
 STATUSES = ("requested", "approved", "issued", "returned")
@@ -14,7 +14,11 @@ def is_valid_id(value):
         return False
 
     digits = value[1:]
-    return all(char in ASCII_DIGITS for char in digits) and int(digits) >= 1
+
+    return (
+        all(char in ASCII_DIGITS for char in digits)
+        and any(char != "0" for char in digits)
+    )
 
 
 def make_id(number):
@@ -31,14 +35,11 @@ def _clean_text(value, label):
 
 
 class RequestManager:
-    """Manage access-card requests and their workflow."""
-
     def __init__(self):
         self._requests = {}
         self._next = 1
 
     def _get(self, request_id):
-        """Find a request or reject an invalid or unknown ID."""
         if not is_valid_id(request_id):
             raise RequestError(
                 "Malformed ID %r (expected e.g. A001)." % (request_id,)
@@ -50,13 +51,11 @@ class RequestManager:
         return self._requests[request_id]
 
     def create(self, fellow_id, card_type):
-        """Create a new access-card request."""
         fellow_id = _clean_text(fellow_id, "Fellow ID")
 
         if not isinstance(card_type, str) or card_type not in CARD_TYPES:
             raise RequestError(
-                "Invalid card type; allowed: %s."
-                % ", ".join(CARD_TYPES)
+                "Invalid card type; allowed: %s." % ", ".join(CARD_TYPES)
             )
 
         record = {
@@ -73,11 +72,9 @@ class RequestManager:
         return dict(record)
 
     def view(self, request_id):
-        """Return a copy of a request."""
         return dict(self._get(request_id))
 
     def approve(self, request_id, approver):
-        """Approve a request that is currently requested."""
         record = self._get(request_id)
         approver = _clean_text(approver, "Approver")
 
@@ -89,46 +86,41 @@ class RequestManager:
         return dict(record)
 
     def issue(self, request_id):
-        """Issue a card only after approval."""
         record = self._get(request_id)
 
         self._require(record, "approved", "issue")
 
         approver = record["approved_by"]
+
         if not isinstance(approver, str) or not approver.strip():
             raise RequestError(
                 "%s has no approver; cannot issue." % request_id
             )
 
         record["status"] = "issued"
+
         return dict(record)
 
     def return_card(self, request_id):
-        """Return a card that has already been issued."""
         record = self._get(request_id)
 
         self._require(record, "issued", "return")
-
         record["status"] = "returned"
+
         return dict(record)
 
     @staticmethod
     def _require(record, needed, action):
-        """Reject operations that are invalid for the current status."""
         if record["status"] != needed:
             raise RequestError(
                 "Cannot %s %s: status is '%s', must be '%s'."
-                % (
-                    action,
-                    record["id"],
-                    record["status"],
-                    needed,
-                )
+                % (action, record["id"], record["status"], needed)
             )
 
     def list(self, status=None):
-        """Return all requests, optionally filtered by status."""
-        if status is not None and status not in STATUSES:
+        if status is not None and (
+            not isinstance(status, str) or status not in STATUSES
+        ):
             raise RequestError("Unknown status %r." % status)
 
         return [
@@ -138,7 +130,6 @@ class RequestManager:
         ]
 
     def to_dict(self):
-        """Return a copy of the manager's data for storage."""
         return {
             "requests": self.list(),
             "next_id": self._next,
@@ -146,7 +137,6 @@ class RequestManager:
 
     @classmethod
     def from_dict(cls, data):
-        """Restore a manager after validating saved data."""
         if not isinstance(data, dict):
             raise RequestError("Saved data must be a dictionary.")
 
@@ -190,19 +180,24 @@ class RequestManager:
                 raise RequestError("Malformed request ID.")
 
             if request_id in seen_ids:
-                raise RequestError(
-                    "Duplicate request ID: %s" % request_id
-                )
+                raise RequestError("Duplicate request ID: %s" % request_id)
 
             fellow_id = record["fellow_id"]
-            if not isinstance(fellow_id, str) or not fellow_id.strip():
+
+            if (
+                not isinstance(fellow_id, str)
+                or not fellow_id.strip()
+                or fellow_id != fellow_id.strip()
+            ):
                 raise RequestError("Invalid fellow ID.")
 
             card_type = record["card_type"]
+
             if not isinstance(card_type, str) or card_type not in CARD_TYPES:
                 raise RequestError("Invalid card type.")
 
             status = record["status"]
+
             if not isinstance(status, str) or status not in STATUSES:
                 raise RequestError("Invalid request status.")
 
@@ -213,19 +208,26 @@ class RequestManager:
                     raise RequestError(
                         "Requested records must have no approver."
                     )
-            elif not isinstance(approver, str) or not approver.strip():
+            elif (
+                not isinstance(approver, str)
+                or not approver.strip()
+                or approver != approver.strip()
+            ):
                 raise RequestError(
                     "Approved, issued, and returned records "
-                    "require an approver."
+                    "require a valid approver."
                 )
 
             seen_ids.add(request_id)
             manager._requests[request_id] = dict(record)
 
-        expected_next = max(
-            (int(request_id[1:]) for request_id in seen_ids),
-            default=0,
-        ) + 1
+        expected_next = (
+            max(
+                (int(request_id[1:]) for request_id in seen_ids),
+                default=0,
+            )
+            + 1
+        )
 
         if next_id < expected_next:
             raise RequestError(
@@ -233,4 +235,5 @@ class RequestManager:
             )
 
         manager._next = next_id
+
         return manager
